@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+/* eslint-disable react-hooks/set-state-in-effect */
 // @ts-nocheck
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -2230,10 +2232,17 @@ function CheckinsTab({ payload, rootData, saveRootData, selectedStudentId }) {
               const isReviewed = checkIn.status === "reviewed";
 
               return (
-                <button
+                <div
                   key={checkIn.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setSelectedCheckInId(checkIn.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelectedCheckInId(checkIn.id);
+                    }
+                  }}
                   style={{
                     width: "100%",
                     textAlign: "left",
@@ -2275,7 +2284,7 @@ function CheckinsTab({ payload, rootData, saveRootData, selectedStudentId }) {
                       )}
                     </div>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>

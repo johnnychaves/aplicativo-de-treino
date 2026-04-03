@@ -1,71 +1,128 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, it, expect } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import App from './App'
 
-function getSubmitButton() {
-  return screen.getByRole('button', { name: 'Add Exercise' })
+const STORAGE_KEY = 'pl-coach-data'
+const SELECTED_STUDENT_KEY = 'pl-student-app-selected-student'
+
+type LocalStorageBridge = {
+  get: (key: string) => Promise<{ value: string | null }>
+  set: (key: string, value: string) => Promise<void>
 }
 
-describe('App', () => {
-  it('renders the heading', () => {
+type RootData = {
+  folders: unknown[]
+  exercises: unknown[]
+  students: Array<Record<string, unknown>>
+  templates: unknown[]
+  checkIns: Array<Record<string, unknown>>
+}
+
+const studentBase = {
+  id: 'student-1',
+  name: 'Ana',
+  status: 'Ativo',
+  goal: 'Hipertrofia',
+  email: 'ana@example.com',
+  phone: '11999999999',
+  birthDate: '1999-01-01',
+  gender: 'Feminino',
+  measurements: {},
+  checkInSettings: { frequency: 'Semanal' },
+  context: {
+    detailedGoal: '',
+    currentFocus: 'Foco em técnica',
+    modality: 'Musculação',
+    level: 'Intermediário',
+    weakPoints: '',
+    technicalNotes: '',
+  },
+  programs: [],
+  activeProgramId: '',
+}
+
+function createRootData(students: Array<Record<string, unknown>>): RootData {
+  return {
+    folders: [],
+    exercises: [],
+    students,
+    templates: [],
+    checkIns: [],
+  }
+}
+
+function installStorage(rootData: RootData, selectedStudentId = '') {
+  const db = new Map<string, string>([
+    [STORAGE_KEY, JSON.stringify(rootData)],
+    [SELECTED_STUDENT_KEY, selectedStudentId],
+  ])
+
+  const storage: LocalStorageBridge = {
+    get: async (key) => ({ value: db.get(key) ?? null }),
+    set: async (key, value) => {
+      db.set(key, value)
+    },
+  }
+
+  ;(window as unknown as Window & { storage: LocalStorageBridge }).storage = storage
+}
+
+beforeEach(() => {
+  installStorage(createRootData([]))
+})
+
+describe('Student App shell', () => {
+  it('shows empty state when there are no students', async () => {
     render(<App />)
-    expect(screen.getByText('Workout Tracker')).toBeInTheDocument()
+    expect(await screen.findByText('Nenhum aluno encontrado')).toBeInTheDocument()
   })
 
-  it('shows empty state message', () => {
+  it('renders home content for stored selected student', async () => {
+    installStorage(createRootData([studentBase]), 'student-1')
     render(<App />)
-    expect(screen.getByText(/no exercises yet/i)).toBeInTheDocument()
+
+    expect(await screen.findByText('Olá, Ana')).toBeInTheDocument()
+    expect(screen.getByText('App do Aluno')).toBeInTheDocument()
   })
 
-  it('adds an exercise', async () => {
+  it('navigates between tabs from bottom menu', async () => {
     const user = userEvent.setup()
+    installStorage(createRootData([studentBase]), 'student-1')
     render(<App />)
 
-    await user.type(screen.getByLabelText('Exercise'), 'Bench Press')
-    await user.clear(screen.getByLabelText('Sets'))
-    await user.type(screen.getByLabelText('Sets'), '4')
-    await user.clear(screen.getByLabelText('Reps'))
-    await user.type(screen.getByLabelText('Reps'), '8')
-    await user.click(getSubmitButton())
+    await screen.findByText('Olá, Ana')
 
-    expect(screen.getByText('Bench Press')).toBeInTheDocument()
-    expect(screen.getByText('4 × 8')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Treinos' }))
+    expect(await screen.findByText('Meus treinos')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Check-ins' }))
+    expect(await screen.findByText('Histórico, envio e edição')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Perfil' }))
+    expect(await screen.findByText('Perfil do aluno')).toBeInTheDocument()
   })
 
-  it('toggles exercise completion', async () => {
+  it('creates a new pending check-in', async () => {
     const user = userEvent.setup()
+    installStorage(createRootData([studentBase]), 'student-1')
     render(<App />)
 
-    await user.type(screen.getByLabelText('Exercise'), 'Squats')
-    await user.click(getSubmitButton())
+    await screen.findByText('Olá, Ana')
+    await user.click(screen.getByRole('button', { name: 'Check-ins' }))
+    await screen.findByText('Histórico, envio e edição')
 
-    const checkBtn = screen.getByLabelText('Complete Squats')
-    await user.click(checkBtn)
+    await user.click(screen.getByRole('button', { name: 'Novo check-in' }))
+    await user.type(screen.getByPlaceholderText('Ex: 82.5'), '80')
+    await user.type(
+      screen.getByPlaceholderText(
+        'Como foi a semana? Alguma dor, dificuldade, falta de energia, alteração de rotina, etc.',
+      ),
+      'Semana boa',
+    )
+    await user.click(screen.getByRole('button', { name: 'Salvar check-in' }))
 
-    expect(screen.getByText('1/1 exercises completed')).toBeInTheDocument()
-  })
-
-  it('removes an exercise', async () => {
-    const user = userEvent.setup()
-    render(<App />)
-
-    await user.type(screen.getByLabelText('Exercise'), 'Deadlift')
-    await user.click(getSubmitButton())
-
-    expect(screen.getByText('Deadlift')).toBeInTheDocument()
-
-    await user.click(screen.getByLabelText('Remove Deadlift'))
-
-    expect(screen.queryByText('Deadlift')).not.toBeInTheDocument()
-  })
-
-  it('does not add exercise with empty name', async () => {
-    const user = userEvent.setup()
-    render(<App />)
-
-    await user.click(getSubmitButton())
-
-    expect(screen.getByText(/no exercises yet/i)).toBeInTheDocument()
+    expect(await screen.findByText('Check-in enviado com sucesso.')).toBeInTheDocument()
+    expect(screen.getAllByText('80 kg')[0]).toBeInTheDocument()
   })
 })
