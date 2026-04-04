@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 /* eslint-disable react-hooks/set-state-in-effect */
 // @ts-nocheck
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ============================================================================
 // [1] POLYFILLS & STORAGE
@@ -28,11 +28,27 @@ const Models = {
   }),
 };
 
+function normalizeRootData(rootData) {
+  const fallback = Models.getInitialRootData();
+  if (!rootData || typeof rootData !== "object") return fallback;
+
+  return {
+    ...fallback,
+    ...rootData,
+    folders: Array.isArray(rootData.folders) ? rootData.folders : [],
+    exercises: Array.isArray(rootData.exercises) ? rootData.exercises : [],
+    students: Array.isArray(rootData.students) ? rootData.students : [],
+    templates: Array.isArray(rootData.templates) ? rootData.templates : [],
+    checkIns: Array.isArray(rootData.checkIns) ? rootData.checkIns : [],
+  };
+}
+
 const StorageService = {
   async getAppData() {
     try {
       const result = await window.storage.get(Constants.STORAGE_KEY);
-      return result?.value ? JSON.parse(result.value) : Models.getInitialRootData();
+      if (!result?.value) return Models.getInitialRootData();
+      return normalizeRootData(JSON.parse(result.value));
     } catch (error) {
       console.error("Student app loading error:", error);
       return Models.getInitialRootData();
@@ -41,7 +57,10 @@ const StorageService = {
 
   async saveAppData(nextRootData) {
     try {
-      await window.storage.set(Constants.STORAGE_KEY, JSON.stringify(nextRootData));
+      await window.storage.set(
+        Constants.STORAGE_KEY,
+        JSON.stringify(normalizeRootData(nextRootData))
+      );
     } catch (error) {
       console.error("Student app saving error:", error);
     }
@@ -50,7 +69,7 @@ const StorageService = {
   async getSelectedStudentId() {
     try {
       const result = await window.storage.get(Constants.SELECTED_STUDENT_KEY);
-      return result?.value || "";
+      return typeof result?.value === "string" ? result.value : "";
     } catch (error) {
       console.error("Selected student loading error:", error);
       return "";
@@ -73,7 +92,9 @@ const StudentAppUtils = {
   formatDate(dateValue) {
     if (!dateValue) return "—";
     try {
-      return new Date(dateValue).toLocaleDateString("pt-BR");
+      const parsedDate = new Date(dateValue);
+      if (Number.isNaN(parsedDate.getTime())) return "—";
+      return parsedDate.toLocaleDateString("pt-BR");
     } catch {
       return "—";
     }
@@ -331,24 +352,33 @@ function useStudentAppStorage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
+
     Promise.all([StorageService.getAppData(), StorageService.getSelectedStudentId()])
       .then(([appData, persistedStudentId]) => {
+        if (!isMounted) return;
+
         const students = appData?.students || [];
         const fallbackStudentId = students[0]?.id || "";
         const resolvedStudentId = students.some((student) => student.id === persistedStudentId)
           ? persistedStudentId
           : fallbackStudentId;
 
-        setRootData(appData || Models.getInitialRootData());
+        setRootData(normalizeRootData(appData));
         setSelectedStudentId(resolvedStudentId);
         setLoading(false);
       })
       .catch((error) => {
         console.error("Student app bootstrap error:", error);
+        if (!isMounted) return;
         setRootData(Models.getInitialRootData());
         setSelectedStudentId("");
         setLoading(false);
       });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const updateSelectedStudentId = useCallback((studentId) => {
@@ -357,8 +387,9 @@ function useStudentAppStorage() {
   }, []);
 
   const saveRootData = useCallback((nextRootData) => {
-    setRootData(nextRootData);
-    StorageService.saveAppData(nextRootData);
+    const normalizedRootData = normalizeRootData(nextRootData);
+    setRootData(normalizedRootData);
+    StorageService.saveAppData(normalizedRootData);
   }, []);
 
   return {
@@ -439,6 +470,29 @@ const styles = {
     justifyContent: "space-between",
     gap: 12,
     marginBottom: 16,
+  },
+  headerActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+  },
+  headerProfileButton: {
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.04)",
+    color: "#e2e8f0",
+    borderRadius: 12,
+    padding: "8px 12px",
+    fontSize: 12,
+    fontWeight: 800,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    cursor: "pointer",
+  },
+  headerProfileButtonActive: {
+    border: "1px solid rgba(249,115,22,0.28)",
+    background: "rgba(249,115,22,0.14)",
+    color: "#f97316",
   },
   brandBadge: {
     width: 42,
@@ -601,7 +655,7 @@ const styles = {
     border: "1px solid rgba(255,255,255,0.1)",
     borderRadius: 24,
     display: "grid",
-    gridTemplateColumns: "repeat(4, 1fr)",
+    gridTemplateColumns: "repeat(3, 1fr)",
     padding: 8,
     pointerEvents: "auto",
     boxShadow: "0 16px 38px rgba(0,0,0,0.38)",
@@ -745,7 +799,8 @@ function StudentSwitcher({ students, selectedStudentId, onChange }) {
       <div style={{ marginBottom: 12 }}>
         <h3 style={styles.cardTitle}>Aluno local do app</h3>
         <p style={{ ...styles.cardText, marginTop: 6 }}>
-Etapa 7 sem autenticação. O app abre o aluno selecionado neste dispositivo.       </p>
+          Etapa 7 sem autenticação. O app abre o aluno selecionado neste dispositivo.
+        </p>
       </div>
 
       <select value={selectedStudentId} onChange={(event) => onChange(event.target.value)} style={styles.select}>
@@ -1593,6 +1648,7 @@ function TrainingsTab({ payload, rootData, saveRootData, selectedStudentId }) {
   const [isExecutionMode, setIsExecutionMode] = useState(false);
   const [executionDraft, setExecutionDraft] = useState({});
   const [saveStatus, setSaveStatus] = useState("");
+  const previousSessionIdRef = useRef("");
 
   useEffect(() => {
     if (!availablePeriods.length) {
@@ -1627,15 +1683,20 @@ function TrainingsTab({ payload, rootData, saveRootData, selectedStudentId }) {
 
   useEffect(() => {
     if (!selectedSession) {
+      previousSessionIdRef.current = "";
       setExecutionDraft({});
       setIsExecutionMode(false);
       setSaveStatus("");
       return;
     }
 
+    const isSessionChanged = previousSessionIdRef.current !== selectedSession.id;
+    previousSessionIdRef.current = selectedSession.id;
     setExecutionDraft(buildExecutionDraftFromSession(selectedSession));
     setIsExecutionMode(false);
-    setSaveStatus("");
+    if (isSessionChanged) {
+      setSaveStatus("");
+    }
   }, [selectedSession]);
 
   const hasRecordedExecution = useMemo(() => {
@@ -2426,6 +2487,13 @@ function CheckinsTab({ payload, rootData, saveRootData, selectedStudentId }) {
 
 function ProfileTab({ payload }) {
   const student = payload.student;
+  const [isEditingContact, setIsEditingContact] = useState(false);
+  const [contactDraft, setContactDraft] = useState({
+    email: student.email || "",
+    phone: student.phone || "",
+  });
+  const [contactSaveStatus, setContactSaveStatus] = useState("");
+  const previousStudentIdRef = useRef(student.id);
 
   const infoCardStyle = {
     padding: 14,
@@ -2439,6 +2507,56 @@ function ProfileTab({ payload }) {
     borderRadius: 16,
     background: "rgba(255,255,255,0.03)",
     border: "1px solid rgba(255,255,255,0.05)",
+  };
+  const inputStyle = {
+    width: "100%",
+    padding: "11px 12px",
+    borderRadius: 12,
+    background: "rgba(255,255,255,0.04)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    color: "#f8fafc",
+    fontSize: 14,
+    outline: "none",
+  };
+  const actionButtonStyle = (primary = false) => ({
+    border: "1px solid",
+    borderColor: primary ? "rgba(249,115,22,0.28)" : "rgba(255,255,255,0.08)",
+    background: primary ? "rgba(249,115,22,0.14)" : "rgba(255,255,255,0.04)",
+    color: primary ? "#f97316" : "#e2e8f0",
+    borderRadius: 12,
+    padding: "9px 12px",
+    fontSize: 12,
+    fontWeight: 800,
+    cursor: "pointer",
+  });
+
+  useEffect(() => {
+    if (previousStudentIdRef.current === student.id) return;
+    previousStudentIdRef.current = student.id;
+    setContactDraft({
+      email: student.email || "",
+      phone: student.phone || "",
+    });
+    setIsEditingContact(false);
+    setContactSaveStatus("");
+  }, [student.id, student.email, student.phone]);
+
+  const handleCancelContactEdit = () => {
+    setContactDraft({
+      email: student.email || "",
+      phone: student.phone || "",
+    });
+    setIsEditingContact(false);
+    setContactSaveStatus("");
+  };
+
+  const handleSaveContactEdit = () => {
+    payload.updateStudentContact({
+      email: contactDraft.email.trim(),
+      phone: contactDraft.phone.trim(),
+    });
+    setIsEditingContact(false);
+    setContactSaveStatus("Contato atualizado com sucesso.");
   };
 
   const renderTextBlock = (label, value, emptyText = "Não informado.") => (
@@ -2541,9 +2659,73 @@ function ProfileTab({ payload }) {
         <div style={{ marginBottom: 12 }}>
           <h3 style={styles.cardTitle}>Dados pessoais</h3>
           <p style={{ ...styles.cardText, marginTop: 6 }}>
-            Informações básicas do aluno para consulta.
+            Informações básicas do aluno para consulta. Apenas email e telefone podem ser editados no app do aluno.
           </p>
         </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+          <StatusBadge label="Somente contato editável" tone="info" />
+          {!isEditingContact ? (
+            <button type="button" onClick={() => setIsEditingContact(true)} style={actionButtonStyle(true)}>
+              Editar contato
+            </button>
+          ) : (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" onClick={handleCancelContactEdit} style={actionButtonStyle()}>
+                Cancelar
+              </button>
+              <button type="button" onClick={handleSaveContactEdit} style={actionButtonStyle(true)}>
+                Salvar contato
+              </button>
+            </div>
+          )}
+        </div>
+
+        {isEditingContact && (
+          <div
+            style={{
+              marginBottom: 12,
+              padding: 12,
+              borderRadius: 14,
+              background: "rgba(255,255,255,0.02)",
+              border: "1px solid rgba(255,255,255,0.05)",
+            }}
+          >
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <label htmlFor="profile-email" style={{ ...styles.metricLabel, display: "block", marginBottom: 6 }}>
+                  Email
+                </label>
+                <input
+                  id="profile-email"
+                  type="email"
+                  value={contactDraft.email}
+                  onChange={(event) => setContactDraft((current) => ({ ...current, email: event.target.value }))}
+                  style={inputStyle}
+                  placeholder="voce@email.com"
+                />
+              </div>
+              <div>
+                <label htmlFor="profile-phone" style={{ ...styles.metricLabel, display: "block", marginBottom: 6 }}>
+                  Telefone
+                </label>
+                <input
+                  id="profile-phone"
+                  value={contactDraft.phone}
+                  onChange={(event) => setContactDraft((current) => ({ ...current, phone: event.target.value }))}
+                  style={inputStyle}
+                  placeholder="11999999999"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {contactSaveStatus && (
+          <div style={{ marginBottom: 12 }}>
+            <StatusBadge label={contactSaveStatus} tone="success" />
+          </div>
+        )}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <div style={infoCardStyle}>
@@ -2638,14 +2820,14 @@ function BottomNav({ activeTab, onChange }) {
     { id: "home", label: "Home", icon: <Icons.Home /> },
     { id: "trainings", label: "Treinos", icon: <Icons.Layers /> },
     { id: "checkins", label: "Check-ins", icon: <Icons.Clipboard /> },
-    { id: "profile", label: "Perfil", icon: <Icons.User /> },
   ];
 
   return (
-    <div style={styles.nav}>
+    <nav aria-label="Navegação inferior" style={styles.nav}>
       <div style={styles.navInner}>
         {tabs.map((tab) => (
           <button
+            type="button"
             key={tab.id}
             onClick={() => onChange(tab.id)}
             style={{ ...styles.navBtn, ...(activeTab === tab.id ? styles.navBtnActive : {}) }}
@@ -2655,7 +2837,7 @@ function BottomNav({ activeTab, onChange }) {
           </button>
         ))}
       </div>
-    </div>
+    </nav>
   );
 }
 
@@ -2666,6 +2848,24 @@ export default function App() {
   const { rootData, selectedStudentId, updateSelectedStudentId, saveRootData, loading } = useStudentAppStorage();
   const payload = useStudentAppPayload(rootData, selectedStudentId);
   const [activeTab, setActiveTab] = useState("home");
+  const updateStudentContact = useCallback(
+    ({ email, phone }) => {
+      if (!rootData || !selectedStudentId) return;
+
+      const nextRootData = JSON.parse(JSON.stringify(rootData));
+      nextRootData.students = (nextRootData.students || []).map((student) => {
+        if (student.id !== selectedStudentId) return student;
+        return {
+          ...student,
+          email,
+          phone,
+        };
+      });
+
+      saveRootData(nextRootData);
+    },
+    [rootData, saveRootData, selectedStudentId]
+  );
 
   const students = rootData?.students || [];
 
@@ -2705,7 +2905,21 @@ export default function App() {
                 <p style={styles.brandSub}>Etapa 7 • refinamentos finais de UX</p>
               </div>
             </div>
-            <span style={styles.pill}>MVP local</span>
+            <div style={styles.headerActions}>
+              <button
+                type="button"
+                aria-label="Abrir perfil"
+                onClick={() => setActiveTab("profile")}
+                style={{
+                  ...styles.headerProfileButton,
+                  ...(activeTab === "profile" ? styles.headerProfileButtonActive : {}),
+                }}
+              >
+                <Icons.User />
+                Perfil
+              </button>
+              <span style={styles.pill}>MVP local</span>
+            </div>
           </div>
 
           <StudentSwitcher
@@ -2744,7 +2958,14 @@ export default function App() {
               selectedStudentId={selectedStudentId}
             />
           )}
-          {payload && activeTab === "profile" && <ProfileTab payload={payload} />}
+          {payload && activeTab === "profile" && (
+            <ProfileTab
+              payload={{
+                ...payload,
+                updateStudentContact,
+              }}
+            />
+          )}
         </main>
       </div>
 
